@@ -133,25 +133,53 @@ void handle_event( u8 touchpad1_val,u8 touchpad2_val,u8 touchpad3_val){
     }else{
         return;
     }
-
-	#if (UNCLOCK_ADV_RUNTILE)
-        update_adv_data_with_runtitle();
-    #endif
-
-
-
 }
 
 void touchpad_send_notify(u8 touchpad1_val, u8 touchpad2_val, u8 touchpad3_val)
 {
+	if(blc_ll_getCurrentState() != BLS_LINK_STATE_CONN) {
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Not connected, cannot send notify\r\n");
+		return;
+	}	
 	if(touchpadNotifyCCC[0] == 0 && touchpadNotifyCCC[1] == 0) {
-        tlkapi_printf(DEBUG_TOUCHPAD,"no unlock ccc %2x \r\n",touchpadNotifyCCC[1]);
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] CCC not enabled: [0]=0x%02x, [1]=0x%02x\r\n", touchpadNotifyCCC[0], touchpadNotifyCCC[1]);
 		return; 
 	}
+	if(touchpadNotifyCCC[0] != 0x01) {
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify not enabled: CCC[0]=0x%02x \r\n", touchpadNotifyCCC[0]);
+		return;
+	}
 	char json_buf[128];
-	int len = sprintf(json_buf, "{\"t1\":%d,\"t2\":%d,\"t3\":%d}",touchpad1_val,touchpad2_val,touchpad3_val);
-	if(1) {
-		tlkapi_printf(DEBUG_TOUCHPAD,"check oke \r\n");
-		blc_gatt_pushHandleValueNotify(BLS_CONN_HANDLE, TOUCHPAD_NOTIFY_DP_H, (u8 *)json_buf, len);
+	memset(json_buf, 0, sizeof(json_buf));
+	json_buf[0] = '{';
+	json_buf[1] = '"';
+	json_buf[2] = 't';
+	json_buf[3] = '1';
+	json_buf[4] = '"';
+	json_buf[5] = ':';
+	json_buf[6] = '0' + touchpad1_val;
+	json_buf[7] = ',';
+	json_buf[8] = '"';
+	json_buf[9] = 't';
+	json_buf[10] = '2';
+	json_buf[11] = '"';
+	json_buf[12] = ':';
+	json_buf[13] = '0' + touchpad2_val;
+	json_buf[14] = ',';
+	json_buf[15] = '"';
+	json_buf[16] = 't';
+	json_buf[17] = '3';
+	json_buf[18] = '"';
+	json_buf[19] = ':';
+	json_buf[20] = '0' + touchpad3_val;
+	json_buf[21] = '}';
+	json_buf[22] = '\0';
+	
+	int len = 21;  
+	u8 ret = blc_gatt_pushHandleValueNotify(BLS_CONN_HANDLE, 0x0012, (u8 *)json_buf, len);
+	if(ret != BLE_SUCCESS) {
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify failed: ret=0x%02x, handle=0x%04x\r\n", ret, notify_handle);
+	} else {
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify sent successfully, handle=0x%04x\r\n", notify_handle);
 	}
 }
