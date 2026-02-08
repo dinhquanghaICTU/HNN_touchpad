@@ -178,8 +178,8 @@ void touchpad_send_notify(u8 touchpad1_val, u8 touchpad2_val, u8 touchpad3_val)
 	int len = 21;  
 	u8 ret = blc_gatt_pushHandleValueNotify(BLS_CONN_HANDLE, 0x0012, (u8 *)json_buf, len);
 	if(ret != BLE_SUCCESS) {
-		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify failed: ret=0x%02x, handle=0x%04x\r\n", ret, notify_handle);
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify failed: ret=0x%02x\r\n", ret);
 	} else {
-		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify sent successfully, handle=0x%04x\r\n", notify_handle);
+		tlkapi_printf(DEBUG_TOUCHPAD,"[TP] Notify sent successfully\r\n");
 	}
 }

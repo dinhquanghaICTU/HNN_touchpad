@@ -34,6 +34,7 @@
 #include "../HNN_config.h"
 #include "../middle/button/m_button.h"
 #include "../middle/led/m_led.h"
+#include "timer.h"
 
 #define ADV_IDLE_ENTER_DEEP_TIME 60
 #define CONN_IDLE_ENTER_DEEP_TIME 60
@@ -48,6 +49,22 @@
 
 #define BLE_DEVICE_ADDRESS_TYPE BLE_DEVICE_ADDRESS_PUBLIC
 
+
+
+
+#if(UNCLOCK_ADV_RUNTILE)
+
+#define PERIODIC_ADV_TIMER_INTERVAL_MS      3000   
+#define PERIODIC_ADV_DURATION_MS            200    
+
+_attribute_data_retention_ volatile u8  timer_adv_trigger_flag = 0;  
+_attribute_data_retention_ volatile u8  periodic_adv_enabled = 1;    
+_attribute_data_retention_ u32 adv_start_tick = 0;
+
+#endif
+
+
+
 _attribute_data_retention_ u8 ota_is_working = 0;
 _attribute_data_retention_ own_addr_type_t app_own_address_type = OWN_ADDRESS_PUBLIC;
 
@@ -58,8 +75,8 @@ _attribute_data_retention_	u32	latest_user_event_tick;
 _attribute_data_retention_	u32	runtitle_adv_update_tick = 0;
 _attribute_data_retention_	u8	dynamic_advData[31] = {0};
 _attribute_data_retention_	u32	runtitle_update_count = 0;
-_attribute_data_retention_	u32	runtitle_success_count = 0;
-_attribute_data_retention_	u32	runtitle_fail_count = 0;
+// _attribute_data_retention_	u32	runtitle_success_count = 0;
+// _attribute_data_retention_	u32	runtitle_fail_count = 0;
 #endif
 
 
@@ -175,30 +192,28 @@ void task_sleep_enter(u8 e, u8 *p, int n)
  */
 void app_switch_to_undirected_adv(u8 e, u8 *p, int n)
 {
-	(void)e;
-	(void)p;
-	(void)n;
-	bls_ll_setAdvParam(MY_ADV_INTERVAL_MIN, MY_ADV_INTERVAL_MAX,
-					   ADV_TYPE_CONNECTABLE_UNDIRECTED, app_own_address_type,
-					   0, NULL,
-					   MY_APP_ADV_CHANNEL,
-					   ADV_FP_NONE);
+    (void)e;
+    (void)p;
+    (void)n;
+    bls_ll_setAdvParam(MY_ADV_INTERVAL_MIN, MY_ADV_INTERVAL_MAX,
+                       ADV_TYPE_CONNECTABLE_UNDIRECTED, app_own_address_type,
+                       0, NULL,
+                       MY_APP_ADV_CHANNEL,
+                       ADV_FP_NONE);
 
-	/* clear resolving list:
-	 * 1. delete all devices in resolving list.
-	 * 2. disable address resolution */
-	blc_ll_clearResolvingList();
+    blc_ll_clearResolvingList();
 
-	// HNN modifier: Dùng runtitle advertising data thay vì tbl_advData mặc định
-	#if (UNCLOCK_ADV_RUNTILE)
-		update_adv_data_with_runtitle();
-	#else
-		// Fallback: dùng advertising data mặc định nếu runtitle không được enable
-		bls_ll_setAdvData((u8 *)tbl_advData, sizeof(tbl_advData));
-		bls_ll_setScanRspData((u8 *)tbl_scanRsp, sizeof(tbl_scanRsp));
-	#endif
+    #if (UNCLOCK_ADV_RUNTILE)
+        u8 led1 = led_get_state(LED_PAD_1);
+        u8 led2 = led_get_state(LED_PAD_2);
+        u8 led3 = led_get_state(LED_PAD_3);
+        update_adv_data_with_runtitle(led1, led2, led3);
+    #else
+        bls_ll_setAdvData((u8 *)tbl_advData, sizeof(tbl_advData));
+        bls_ll_setScanRspData((u8 *)tbl_scanRsp, sizeof(tbl_scanRsp));
+    #endif
 
-	bls_ll_setAdvEnable(BLC_ADV_ENABLE); // must: set ADV enable
+    bls_ll_setAdvEnable(BLC_ADV_ENABLE);
 }
 
 
@@ -208,7 +223,6 @@ void app_switch_to_undirected_adv(u8 e, u8 *p, int n)
 void update_adv_data_with_runtitle(u8 touchpad1_val, u8 touchpad2_val, u8 touchpad3_val)
 {
 	u8 pos = 0;
-	
 	dynamic_advData[pos++] = 2;
 	dynamic_advData[pos++] = DT_FLAGS;
 	dynamic_advData[pos++] = 0x05;
@@ -231,15 +245,11 @@ void update_adv_data_with_runtitle(u8 touchpad1_val, u8 touchpad2_val, u8 touchp
 	dynamic_advData[pos++] = touchpad3_val;
 	
 	ble_sts_t status = bls_ll_setAdvData(dynamic_advData, pos);
-	
-	runtitle_update_count++;
-	
+
 	if(status == BLE_SUCCESS) {
-		runtitle_success_count++;
-		tlkapi_printf(APP_LOG_EN, "[APP][ADV] SUCCESS #%d:touchpad=[%d,%d,%d], pos=%d\r\n",runtitle_success_count, touchpad1_val, touchpad2_val, touchpad3_val, pos);
+		tlkapi_printf(APP_LOG_EN, "[APP][ADV] SUCCESS touchpad=[%d,%d,%d]\r\n", touchpad1_val, touchpad2_val, touchpad3_val);
 	} else {
-		runtitle_fail_count++;
-		tlkapi_printf(APP_LOG_EN, "[APP][ADV] FAILED #%d: status=0x%02x, touchpad=[%d,%d,%d]\r\n", runtitle_fail_count, status, touchpad1_val, touchpad2_val, touchpad3_val);
+		tlkapi_printf(APP_LOG_EN, "[APP][ADV] FAILED  status=0x%02x, touchpad=[%d,%d,%d]\r\n", status, touchpad1_val, touchpad2_val, touchpad3_val);
 	}
 }
 #endif
@@ -268,7 +278,12 @@ void task_connect(u8 e, u8 *p, int n)
 
 	latest_user_event_tick = clock_time();
 
-	device_in_connection_state = 1; //
+	device_in_connection_state = 1; 
+    #if(UNCLOCK_ADV_RUNTILE)
+    periodic_adv_enabled = 0;
+    // timer_stop(TIMER0);
+    tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Stop timer - Connected\r\n");
+    #endif
 
 #if (UI_LED_ENABLE && !TEST_CONN_CURRENT_ENABLE)
 	gpio_write(GPIO_LED_RED, LED_ON_LEVEL); // red led on
@@ -306,13 +321,22 @@ void task_terminate(u8 e, u8 *p, int n) //*p is terminate reason
 	tlkapi_printf(APP_CONTR_EVENT_LOG_EN, "[APP][EVT] disconnect, reason 0x%x\r\n", pEvt->terminate_reason);
 
 #if (BLE_APP_PM_ENABLE)
-	// user has push terminate packet to BLE TX buffer before deepsleep
+	
 	if (sendTerminate_before_enterDeep == 1 && !TEST_CONN_CURRENT_ENABLE)
 	{
 		sendTerminate_before_enterDeep = 2;
-		bls_ll_setAdvEnable(BLC_ADV_DISABLE); // disable ADV
+		bls_ll_setAdvEnable(BLC_ADV_DISABLE); 
 	}
 #endif
+
+
+
+ #if(UNCLOCK_ADV_RUNTILE)
+    periodic_adv_enabled = 1;        
+    timer_adv_trigger_flag = 1;      
+    // timer_start(TIMER0);             
+    tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Restart timer after disconnect\r\n");
+    #endif
 
 #if (UI_LED_ENABLE && !TEST_CONN_CURRENT_ENABLE)
 	gpio_write(GPIO_LED_RED, !LED_ON_LEVEL); // red led off
@@ -691,8 +715,8 @@ _attribute_no_inline_ void user_init_normal(void)
 #endif
 	blc_ota_initOtaServer_module();
 
-	blc_ota_setOtaProcessTimeout(300);	 // OTA process timeout:  30 seconds
-	blc_ota_setOtaDataPacketTimeout(10); // OTA data packet timeout:  4 seconds
+	blc_ota_setOtaProcessTimeout(300);	 // OTA process timeout:  30 seconds// HNN_modifier
+	blc_ota_setOtaDataPacketTimeout(10); // OTA data packet timeout:  4 seconds // HNN_modifier
 	blc_ota_registerOtaStartCmdCb(app_enter_ota_mode);
 	blc_ota_registerOtaResultIndicationCb(app_ota_end_result);
 #endif
@@ -756,7 +780,12 @@ _attribute_no_inline_ void user_init_normal(void)
 
 	bls_ll_setAdvData((u8 *)tbl_advData, sizeof(tbl_advData));
 	bls_ll_setScanRspData((u8 *)tbl_scanRsp, sizeof(tbl_scanRsp));
-	bls_ll_setAdvEnable(BLC_ADV_ENABLE); 
+
+	#if(UNCLOCK_ADV_RUNTILE)
+   		bls_ll_setAdvEnable(BLC_ADV_DISABLE);  
+	#else
+    	bls_ll_setAdvEnable(BLC_ADV_ENABLE);   
+	#endif
 
 	// // HNN modifier: Update advertising data with runtitle ngay sau khi enable
 	#if (UNCLOCK_ADV_RUNTILE)
@@ -827,8 +856,31 @@ _attribute_no_inline_ void user_init_normal(void)
 
 	hnn_hardware_init();
 
+
+	#if(UNCLOCK_ADV_RUNTILE)
+
+
+	timer_init_periodic_advertising();
+
+	#endif
+
 	tlkapi_printf(APP_LOG_EN, "[APP][INI] BLE sample init \r\n");
 }
+
+
+#if(UNCLOCK_ADV_RUNTILE)
+
+void timer_init_periodic_advertising(void)
+{
+    
+    tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Periodic ADV init: %d ms interval\r\n", 
+                  PERIODIC_ADV_TIMER_INTERVAL_MS);
+}
+
+#endif
+
+
+
 
 /**
  * @brief		user initialization when MCU wake_up from deepSleep_retention mode
@@ -984,6 +1036,50 @@ void app_flash_protection_operation(u8 flash_op_evt, u32 op_addr_begin, u32 op_a
 
 #endif
 
+
+
+
+#if(UNCLOCK_ADV_RUNTILE)
+void process_periodic_advertising(void)
+{
+    static u32 last_adv_trigger_tick = 0;  // Lưu tick lần cuối trigger
+    u8 current_state = blc_ll_getCurrentState();
+    
+    // Kiểm tra đã đến lúc trigger chưa (mỗi 3 giây)
+    if(clock_time_exceed(last_adv_trigger_tick, PERIODIC_ADV_TIMER_INTERVAL_MS * 1000)) {
+        last_adv_trigger_tick = clock_time();
+        timer_adv_trigger_flag = 1;
+    }
+    
+    // Nếu timer trigger và đang ở trạng thái IDLE hoặc ADV
+    if(timer_adv_trigger_flag) {
+        timer_adv_trigger_flag = 0;
+        
+        if(current_state == BLS_LINK_STATE_IDLE || current_state == BLS_LINK_STATE_ADV) {
+            adv_start_tick = clock_time();
+            u8 led1 = led_get_state(LED_PAD_1);
+            u8 led2 = led_get_state(LED_PAD_2);
+            u8 led3 = led_get_state(LED_PAD_3);
+            update_adv_data_with_runtitle(led1, led2, led3);
+            
+            if(current_state == BLS_LINK_STATE_IDLE) {
+                bls_ll_setAdvEnable(BLC_ADV_ENABLE);
+                tlkapi_printf(APP_LOG_EN, "[APP][ADV] Timer trigger - Start ADV\r\n");
+            }
+        }
+    }
+    
+    // Nếu đang advertising và đã đủ 200ms -> tắt
+    if(current_state == BLS_LINK_STATE_ADV && adv_start_tick != 0) {
+        if(clock_time_exceed(adv_start_tick, PERIODIC_ADV_DURATION_MS * 1000)) {
+            bls_ll_setAdvEnable(BLC_ADV_DISABLE);
+            adv_start_tick = 0;
+            tlkapi_printf(APP_LOG_EN, "[APP][ADV] Stop ADV - Wait next timer\r\n");
+        }
+    }
+}
+#endif
+
 /////////////////////////////////////////////////////////////////////s
 // main loop flow
 /////////////////////////////////////////////////////////////////////
@@ -998,10 +1094,14 @@ _attribute_no_inline_ void main_loop(void)
 	////////////////////////////////////// BLE entry /////////////////////////////////
 	blt_sdk_main_loop();
 
-	hnn_button_poll();
+	hnn_button_poll(); // HNN_modifier
 
 	
-
+	 #if(UNCLOCK_ADV_RUNTILE)
+    if(periodic_adv_enabled) {
+        process_periodic_advertising();
+    }
+    #endif
 ////////////////////////////////////// UI entry /////////////////////////////////
 ///////////////////////////////////// Battery Check ////////////////////////////////
 #if (APP_BATT_CHECK_ENABLE)

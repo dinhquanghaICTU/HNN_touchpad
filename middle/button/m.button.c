@@ -68,7 +68,7 @@ static void on_btn_pressed(int pin, int evt, void *user)
     } else {
         return;  
     }
-    touchpad_send_notify(touchpad1_val, touchpad2_val, touchpad3_val);
+   
 
 
      #if (UNCLOCK_ADV_RUNTILE)
@@ -76,6 +76,7 @@ static void on_btn_pressed(int pin, int evt, void *user)
         u8 led2 = led_get_state(LED_PAD_2);
         u8 led3 = led_get_state(LED_PAD_3);
         update_adv_data_with_runtitle(led1, led2, led3);
+        touchpad_send_notify(led1, led2, led3);
     #endif
 }
 
@@ -95,7 +96,7 @@ static void on_btn_released(int pin, int evt, void *user)
     } else {
         return;  
     }
-    touchpad_send_notify(touchpad1_val, touchpad2_val, touchpad3_val);
+    // touchpad_send_notify(touchpad1_val, touchpad2_val, touchpad3_val);
     // #if (UNCLOCK_ADV_RUNTILE)
     //     u8 led1 = led_get_state(LED_PAD_1);
     //     u8 led2 = led_get_state(LED_PAD_2);
