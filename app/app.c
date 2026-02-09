@@ -34,7 +34,10 @@
 #include "../HNN_config.h"
 #include "../middle/button/m_button.h"
 #include "../middle/led/m_led.h"
-#include "timer.h"
+// #include "blt_soft_timer.h"
+// #include "vendor/common/blt_soft_timer.h"
+#include "../common/blt_soft_timer.h"
+
 
 #define ADV_IDLE_ENTER_DEEP_TIME 60
 #define CONN_IDLE_ENTER_DEEP_TIME 60
@@ -52,13 +55,11 @@
 
 
 
-#if(UNCLOCK_ADV_RUNTILE)
+#if(SET_ADV_3S)
 
 #define PERIODIC_ADV_TIMER_INTERVAL_MS      3000   
 #define PERIODIC_ADV_DURATION_MS            200    
 
-_attribute_data_retention_ volatile u8  timer_adv_trigger_flag = 0;  
-_attribute_data_retention_ volatile u8  periodic_adv_enabled = 1;    
 _attribute_data_retention_ u32 adv_start_tick = 0;
 
 #endif
@@ -75,8 +76,6 @@ _attribute_data_retention_	u32	latest_user_event_tick;
 _attribute_data_retention_	u32	runtitle_adv_update_tick = 0;
 _attribute_data_retention_	u8	dynamic_advData[31] = {0};
 _attribute_data_retention_	u32	runtitle_update_count = 0;
-// _attribute_data_retention_	u32	runtitle_success_count = 0;
-// _attribute_data_retention_	u32	runtitle_fail_count = 0;
 #endif
 
 
@@ -219,6 +218,44 @@ void app_switch_to_undirected_adv(u8 e, u8 *p, int n)
 
 
 
+#if(SET_ADV_3S) //HNN_modifier
+
+int periodic_adv_timer_callback(void)
+{
+    u8 current_state = blc_ll_getCurrentState(); // lấy thời gian hiện tại 
+    if(current_state == BLS_LINK_STATE_IDLE) { // nếu thấy đang ở trạng thái không làm gì 
+		#if(UNCLOCK_ADV_RUNTILE)
+		// lấy state của led hiện tại 
+			u8 led1 = led_get_state(LED_PAD_1);
+        	u8 led2 = led_get_state(LED_PAD_2);
+        	u8 led3 = led_get_state(LED_PAD_3);
+        	update_adv_data_with_runtitle(led1, led2, led3); // đây để set lại gói adv runtile 
+   		#endif
+        bls_ll_setAdvEnable(BLC_ADV_ENABLE); // bật lại adv để phát 
+        adv_start_tick = clock_time(); // tính thời gian bắt đầu adv 
+        
+        tlkapi_printf(APP_LOG_EN, "[APP][ADV] Timer callback\r\n");
+    }
+    
+    return 0; 
+}
+
+
+void check_adv_duration(void) //HNN_modifier
+{
+    u8 current_state = blc_ll_getCurrentState(); // lấy ra thời gian hiện tại 
+    if(current_state == BLS_LINK_STATE_ADV && adv_start_tick != 0) { //check nếu  cờ adv_start_tick được sét
+        if(clock_time_exceed(adv_start_tick, PERIODIC_ADV_DURATION_MS * 1000)) { // tính systick 
+            bls_ll_setAdvEnable(BLC_ADV_DISABLE); // tắt adv 
+            adv_start_tick = 0; //set lại cờ systick
+            tlkapi_printf(APP_LOG_EN, "[APP][ADV] Stop ADV after 200ms\r\n");
+        }
+    }
+}
+
+#endif
+
+
 #if (UNCLOCK_ADV_RUNTILE)
 void update_adv_data_with_runtitle(u8 touchpad1_val, u8 touchpad2_val, u8 touchpad3_val)
 {
@@ -279,10 +316,11 @@ void task_connect(u8 e, u8 *p, int n)
 	latest_user_event_tick = clock_time();
 
 	device_in_connection_state = 1; 
-    #if(UNCLOCK_ADV_RUNTILE)
-    periodic_adv_enabled = 0;
-    // timer_stop(TIMER0);
-    tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Stop timer - Connected\r\n");
+
+    #if(SET_ADV_3S) // HNN_modifier
+    if(blt_soft_timer_delete(&periodic_adv_timer_callback)) { // khi có connect sẽ xóa cái callback đó đi tránh gọi lại nhiều lần
+        tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Timer deleted - Connected\r\n");
+    }
     #endif
 
 #if (UI_LED_ENABLE && !TEST_CONN_CURRENT_ENABLE)
@@ -320,7 +358,7 @@ void task_terminate(u8 e, u8 *p, int n) //*p is terminate reason
 
 	tlkapi_printf(APP_CONTR_EVENT_LOG_EN, "[APP][EVT] disconnect, reason 0x%x\r\n", pEvt->terminate_reason);
 
-#if (BLE_APP_PM_ENABLE)
+#if (BLE_APP_PM_ENABLE) //HNN_modifier
 	
 	if (sendTerminate_before_enterDeep == 1 && !TEST_CONN_CURRENT_ENABLE)
 	{
@@ -331,11 +369,10 @@ void task_terminate(u8 e, u8 *p, int n) //*p is terminate reason
 
 
 
- #if(UNCLOCK_ADV_RUNTILE)
-    periodic_adv_enabled = 1;        
-    timer_adv_trigger_flag = 1;      
-    // timer_start(TIMER0);             
-    tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Restart timer after disconnect\r\n");
+  	#if(SET_ADV_3S)
+		if(blt_soft_timer_add(&periodic_adv_timer_callback,PERIODIC_ADV_TIMER_INTERVAL_MS * 1000)) { // khi thiết bị disconnect thì đăng kí lại callback 
+			tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Timer added - Disconnected\r\n");
+		}
     #endif
 
 #if (UI_LED_ENABLE && !TEST_CONN_CURRENT_ENABLE)
@@ -589,12 +626,12 @@ void blt_pm_proc(void)
 		return;
 	}
 
-	// Khi ở trạng thái IDLE: không làm gì (không đi deep sleep)
+	
 	if (blc_ll_getCurrentState() == BLS_LINK_STATE_IDLE)
 	{
-		// Không đi deep sleep, chỉ để idle
+	
 	}
-#endif // end of BLE_APP_PM_ENABLE
+#endif 
 }
 
 /**
@@ -797,7 +834,7 @@ _attribute_no_inline_ void user_init_normal(void)
 		
 	#endif
 
-	/* set RF power index, user must set it after every suspend wake_up, because relative setting will be reset in suspend */
+
 	rf_set_power_level_index(MY_RF_POWER_INDEX);
 
 	bls_app_registerEventCallback(BLT_EV_FLAG_CONNECT, &task_connect);
@@ -856,28 +893,19 @@ _attribute_no_inline_ void user_init_normal(void)
 
 	hnn_hardware_init();
 
-
 	#if(UNCLOCK_ADV_RUNTILE)
-
-
-	timer_init_periodic_advertising();
-
+    	blt_soft_timer_init();
+		if(blt_soft_timer_add(&periodic_adv_timer_callback,PERIODIC_ADV_TIMER_INTERVAL_MS * 1000)) { // đăng kí callback khi khởi tạo lần đầu tiên
+			tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Soft timer added: %d ms\r\n", PERIODIC_ADV_TIMER_INTERVAL_MS);
+		} else {
+			tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Failed to add timer!\r\n");
+		}
 	#endif
 
 	tlkapi_printf(APP_LOG_EN, "[APP][INI] BLE sample init \r\n");
 }
 
 
-#if(UNCLOCK_ADV_RUNTILE)
-
-void timer_init_periodic_advertising(void)
-{
-    
-    tlkapi_printf(APP_LOG_EN, "[APP][TIMER] Periodic ADV init: %d ms interval\r\n", 
-                  PERIODIC_ADV_TIMER_INTERVAL_MS);
-}
-
-#endif
 
 
 
@@ -1037,49 +1065,6 @@ void app_flash_protection_operation(u8 flash_op_evt, u32 op_addr_begin, u32 op_a
 #endif
 
 
-
-
-#if(UNCLOCK_ADV_RUNTILE)
-void process_periodic_advertising(void)
-{
-    static u32 last_adv_trigger_tick = 0;  // Lưu tick lần cuối trigger
-    u8 current_state = blc_ll_getCurrentState();
-    
-    // Kiểm tra đã đến lúc trigger chưa (mỗi 3 giây)
-    if(clock_time_exceed(last_adv_trigger_tick, PERIODIC_ADV_TIMER_INTERVAL_MS * 1000)) {
-        last_adv_trigger_tick = clock_time();
-        timer_adv_trigger_flag = 1;
-    }
-    
-    // Nếu timer trigger và đang ở trạng thái IDLE hoặc ADV
-    if(timer_adv_trigger_flag) {
-        timer_adv_trigger_flag = 0;
-        
-        if(current_state == BLS_LINK_STATE_IDLE || current_state == BLS_LINK_STATE_ADV) {
-            adv_start_tick = clock_time();
-            u8 led1 = led_get_state(LED_PAD_1);
-            u8 led2 = led_get_state(LED_PAD_2);
-            u8 led3 = led_get_state(LED_PAD_3);
-            update_adv_data_with_runtitle(led1, led2, led3);
-            
-            if(current_state == BLS_LINK_STATE_IDLE) {
-                bls_ll_setAdvEnable(BLC_ADV_ENABLE);
-                tlkapi_printf(APP_LOG_EN, "[APP][ADV] Timer trigger - Start ADV\r\n");
-            }
-        }
-    }
-    
-    // Nếu đang advertising và đã đủ 200ms -> tắt
-    if(current_state == BLS_LINK_STATE_ADV && adv_start_tick != 0) {
-        if(clock_time_exceed(adv_start_tick, PERIODIC_ADV_DURATION_MS * 1000)) {
-            bls_ll_setAdvEnable(BLC_ADV_DISABLE);
-            adv_start_tick = 0;
-            tlkapi_printf(APP_LOG_EN, "[APP][ADV] Stop ADV - Wait next timer\r\n");
-        }
-    }
-}
-#endif
-
 /////////////////////////////////////////////////////////////////////s
 // main loop flow
 /////////////////////////////////////////////////////////////////////
@@ -1094,13 +1079,16 @@ _attribute_no_inline_ void main_loop(void)
 	////////////////////////////////////// BLE entry /////////////////////////////////
 	blt_sdk_main_loop();
 
+	#if(SET_ADV_3S) // HNN_modifier
+		blt_soft_timer_process(MAINLOOP_ENTRY);  // cứ check nếu khi nào trôi qua đủ time thì nó sẽ gọi callback periodic_adv_timer_callback
+	#endif
+
+
 	hnn_button_poll(); // HNN_modifier
 
 	
-	 #if(UNCLOCK_ADV_RUNTILE)
-    if(periodic_adv_enabled) {
-        process_periodic_advertising();
-    }
+	 #if(SET_ADV_3S)// HNN_modifier
+        check_adv_duration();  // check xem adv được gọi bao nhiêu lâu rồi
     #endif
 ////////////////////////////////////// UI entry /////////////////////////////////
 ///////////////////////////////////// Battery Check ////////////////////////////////

@@ -1,9 +1,13 @@
 
 #ifndef __HNN_CONFIG_H__
+
 #define __HNN_CONFIG_H__
 
 #define DEBUG_TOUCHPAD   1   
 #define UNCLOCK_ADV_RUNTILE 1 
+
+
+#define SET_ADV_3S  1
 
 
 #if DEBUG_TOUCHPAD
